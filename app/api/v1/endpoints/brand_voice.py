@@ -1,8 +1,9 @@
 """
 API Endpoints for Brand Voice Training & Retrieval.
+Enhanced with quality analysis, document management, and multi-language support.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import List
 from uuid import UUID
 
@@ -12,10 +13,13 @@ from app.schemas.brand_voice import (
     BrandDocumentUpload,
     BrandVoiceTrainingStatus,
     BrandContextRequest,
-    BrandContextResponse
+    BrandContextResponse,
+    BrandDocumentResponse,
+    BrandAnalysisResponse
 )
 from app.services.brand_voice.service import BrandVoiceService
 from app.db.session import get_db
+from app.models.brand_voice import BrandProfile, BrandDocument
 from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/brand-voice", tags=["Brand Voice"])
@@ -49,6 +53,11 @@ def upload_brand_documents(
     """
     Upload brand documents (guidelines, tone examples, past content).
     This trains the AI on your unique brand voice using RAG.
+    
+    Enhanced features:
+    - Multi-language document support
+    - Quality scoring based on document diversity
+    - Automatic recommendations for improvement
     """
     if not documents:
         raise HTTPException(status_code=400, detail="At least one document is required")
@@ -66,7 +75,10 @@ def upload_brand_documents(
         {
             "title": doc.title,
             "content": doc.content,
-            "document_type": doc.document_type
+            "document_type": doc.document_type,
+            "language": doc.language,
+            "source_url": doc.source_url,
+            "file_name": doc.file_name
         }
         for doc in documents
     ]
@@ -80,6 +92,7 @@ def upload_brand_documents(
         "brand_id": profile.id,
         "documents_processed": result["documents_processed"],
         "total_chunks": result["total_chunks"],
+        "training_quality_score": result["training_quality_score"],
         "status": result["status"],
         "message": result["message"]
     }
@@ -94,6 +107,11 @@ def get_brand_context_for_generation(
     """
     Retrieve relevant brand voice context.
     This should be called before generating any content so the AI stays on-brand.
+    
+    Enhanced features:
+    - Language-aware retrieval for multi-language content generation
+    - Confidence scoring based on training quality
+    - Recommendations for improving brand voice
     """
     service = BrandVoiceService()
 
@@ -108,7 +126,8 @@ def get_brand_context_for_generation(
     context = service.get_brand_context(
         brand_id=profile.id,
         query=request.query,
-        max_chunks=request.max_chunks
+        max_chunks=request.max_chunks,
+        language=request.language
     )
 
     return context
@@ -124,3 +143,68 @@ def get_my_brand_profile(
     if not profile:
         raise HTTPException(status_code=404, detail="No brand profile found")
     return profile
+
+
+@router.get("/analysis", response_model=BrandAnalysisResponse)
+def analyze_brand_voice_quality(
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Analyze brand voice training quality.
+    Returns scores, strengths, and actionable recommendations.
+    """
+    service = BrandVoiceService()
+    profile = db.query(BrandProfile).filter(BrandProfile.user_id == user_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="No brand profile found")
+    
+    analysis = service.analyze_brand_voice(db=db, brand_id=profile.id)
+    return analysis
+
+
+@router.get("/documents", response_model=List[BrandDocumentResponse])
+def list_brand_documents(
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    include_inactive: bool = False
+):
+    """List all brand documents for the current user."""
+    profile = db.query(BrandProfile).filter(BrandProfile.user_id == user_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="No brand profile found")
+    
+    query = db.query(BrandDocument).filter(BrandDocument.brand_profile_id == profile.id)
+    if not include_inactive:
+        query = query.filter(BrandDocument.is_active == True)
+    
+    documents = query.order_by(BrandDocument.created_at.desc()).all()
+    return documents
+
+
+@router.delete("/documents/{document_id}")
+def delete_brand_document(
+    document_id: UUID,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Soft-delete a brand document (set is_active=False).
+    This allows recovery if needed and maintains historical data.
+    """
+    profile = db.query(BrandProfile).filter(BrandProfile.user_id == user_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="No brand profile found")
+    
+    document = db.query(BrandDocument).filter(
+        BrandDocument.id == document_id,
+        BrandDocument.brand_profile_id == profile.id
+    ).first()
+    
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    document.is_active = False
+    db.commit()
+    
+    return {"message": f"Document '{document.title}' has been deactivated", "document_id": str(document_id)}
