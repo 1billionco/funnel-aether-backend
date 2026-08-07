@@ -21,9 +21,23 @@ class BrandProfile(Base):
     target_audience = Column(Text, nullable=True)
     key_values = Column(Text, nullable=True)
     do_not_use = Column(Text, nullable=True)
+    
+    # Enhanced fields for better brand voice control
+    tone_descriptors = Column(Text, nullable=True)  # e.g., "professional, witty, empathetic"
+    writing_style = Column(String(50), nullable=True)  # e.g., "conversational", "formal", "technical"
+    brand_personality = Column(Text, nullable=True)  # e.g., "friendly expert", "bold innovator"
+    
+    # Multi-language support (dissertation requirement for global SMEs)
+    primary_language = Column(String(10), default="en")  # ISO language code
+    supported_languages = Column(Text, nullable=True)  # JSON array of supported languages
 
     is_trained = Column(Boolean, default=False)
     document_count = Column(Integer, default=0)
+    total_chunks = Column(Integer, default=0)  # Track total embedded chunks
+    
+    # Training quality metrics
+    training_quality_score = Column(Integer, default=0)  # 0-100 score based on document diversity
+    last_training_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -39,9 +53,19 @@ class BrandDocument(Base):
     brand_profile_id = Column(PG_UUID(as_uuid=True), ForeignKey("brand_profiles.id"), nullable=False)
     
     title = Column(String(200), nullable=False)
-    document_type = Column(String(50), default="guidelines")
+    document_type = Column(String(50), default="guidelines")  # guidelines, tone_examples, past_content, website_copy, social_posts, email_templates, ad_copy, blog_posts
     content = Column(Text, nullable=False)  # Original content
     chunk_count = Column(Integer, default=0)
+    
+    # Enhanced tracking for better RAG retrieval
+    language = Column(String(10), default="en")  # Document language
+    source_url = Column(String(500), nullable=True)  # If scraped from web
+    file_name = Column(String(200), nullable=True)  # Original filename if uploaded
+    
+    # Quality & usage tracking
+    relevance_score = Column(Integer, default=100)  # How often this doc is retrieved (higher = more relevant)
+    last_retrieved_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)  # Can be deactivated without deletion
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
